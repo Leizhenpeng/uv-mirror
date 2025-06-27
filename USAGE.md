@@ -102,19 +102,6 @@ WHITELIST="Microsoft/VSCode,GOLANG/GO" go run main.go
 - 支持大小写不敏感匹配
 - 如果不设置 `WHITELIST`，则允许所有仓库访问
 
-## Docker 使用
-
-```bash
-# 构建镜像
-docker build -t gh-proxy .
-
-# 运行容器
-docker run -p 8080:8080 gh-proxy
-
-# 使用 docker-compose
-docker-compose up -d
-```
-
 ## 功能验证
 
 测试服务是否正常：

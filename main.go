@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"regexp"
 	"strings"
 )
 
@@ -29,12 +28,7 @@ const (
 // Config holds the configuration for the proxy
 type Config struct {
 	Port      string
-	JSDELIVR  bool
-	CNPMJS    bool
 	SizeLimit int64 // Maximum file size in bytes (2GB default)
-	PREFIX    string
-	AssetURL  string
-	Whitelist []string // Whitelisted repositories (user/repo format)
 }
 
 // ProxyHandler handles all proxy requests
@@ -290,24 +284,6 @@ func (p *ProxyHandler) handleProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// For jsdelivr acceleration (optional)
-	if p.config.JSDELIVR && p.canUseJsdelivr(targetURL) {
-		jsdelivrURL := p.convertToJsdelivr(targetURL)
-		if jsdelivrURL != "" {
-			http.Redirect(w, r, jsdelivrURL, http.StatusTemporaryRedirect)
-			return
-		}
-	}
-
-	// For cnpmjs acceleration (optional)
-	if p.config.CNPMJS && p.canUseCnpmjs(targetURL) {
-		cnpmjsURL := p.convertToCnpmjs(targetURL)
-		if cnpmjsURL != "" {
-			http.Redirect(w, r, cnpmjsURL, http.StatusTemporaryRedirect)
-			return
-		}
-	}
-
 	// Proxy the request
 	p.proxyRequest(w, r, targetURL)
 }
@@ -336,8 +312,14 @@ func (p *ProxyHandler) isGitHubDomain(host string) bool {
 
 // Check if repository is in whitelist
 func (p *ProxyHandler) isRepositoryWhitelisted(targetURL *url.URL) bool {
-	// If no whitelist is configured, allow all repositories
-	if len(p.config.Whitelist) == 0 {
+	// Hardcoded whitelist - add your allowed repositories here
+	whitelist := []string{
+		"astral-sh/uv",
+		// Add more repositories as needed
+	}
+
+	// If whitelist is empty, allow all repositories
+	if len(whitelist) == 0 {
 		return true
 	}
 
@@ -348,7 +330,7 @@ func (p *ProxyHandler) isRepositoryWhitelisted(targetURL *url.URL) bool {
 	}
 
 	// Check if repository is in whitelist
-	for _, whitelistedRepo := range p.config.Whitelist {
+	for _, whitelistedRepo := range whitelist {
 		if strings.EqualFold(repoPath, whitelistedRepo) {
 			return true
 		}
@@ -404,56 +386,6 @@ func (p *ProxyHandler) isGitCloneRequest(r *http.Request) bool {
 func (p *ProxyHandler) handleGitClone(w http.ResponseWriter, r *http.Request, targetURL *url.URL) {
 	// For git clone, we need to proxy the request directly
 	p.proxyRequest(w, r, targetURL)
-}
-
-// Check if URL can use jsdelivr
-func (p *ProxyHandler) canUseJsdelivr(targetURL *url.URL) bool {
-	// jsdelivr supports github.com and raw.githubusercontent.com
-	return targetURL.Host == GitHubDomain || targetURL.Host == GitHubRawDomain
-}
-
-// Convert to jsdelivr URL
-func (p *ProxyHandler) convertToJsdelivr(targetURL *url.URL) string {
-	path := targetURL.Path
-
-	if targetURL.Host == GitHubRawDomain {
-		// raw.githubusercontent.com/user/repo/branch/file -> cdn.jsdelivr.net/gh/user/repo@branch/file
-		parts := strings.Split(strings.Trim(path, "/"), "/")
-		if len(parts) >= 3 {
-			user := parts[0]
-			repo := parts[1]
-			branch := parts[2]
-			file := strings.Join(parts[3:], "/")
-			return fmt.Sprintf("https://cdn.jsdelivr.net/gh/%s/%s@%s/%s", user, repo, branch, file)
-		}
-	} else if targetURL.Host == GitHubDomain {
-		// github.com/user/repo/blob/branch/file -> cdn.jsdelivr.net/gh/user/repo@branch/file
-		if strings.Contains(path, "/blob/") {
-			re := regexp.MustCompile(`^/([^/]+)/([^/]+)/blob/([^/]+)/(.+)$`)
-			matches := re.FindStringSubmatch(path)
-			if len(matches) == 5 {
-				user := matches[1]
-				repo := matches[2]
-				branch := matches[3]
-				file := matches[4]
-				return fmt.Sprintf("https://cdn.jsdelivr.net/gh/%s/%s@%s/%s", user, repo, branch, file)
-			}
-		}
-	}
-
-	return ""
-}
-
-// Check if URL can use cnpmjs
-func (p *ProxyHandler) canUseCnpmjs(targetURL *url.URL) bool {
-	// This is just an example, implement based on cnpmjs capabilities
-	return false
-}
-
-// Convert to cnpmjs URL
-func (p *ProxyHandler) convertToCnpmjs(targetURL *url.URL) string {
-	// Implement cnpmjs conversion logic if needed
-	return ""
 }
 
 // Proxy the request to target URL
@@ -539,12 +471,7 @@ func main() {
 	// Get configuration from environment variables
 	config := &Config{
 		Port:      getEnv("PORT", DefaultPort),
-		JSDELIVR:  getEnv("JSDELIVR", "false") == "true",
-		CNPMJS:    getEnv("CNPMJS", "false") == "true",
 		SizeLimit: 2 * 1024 * 1024 * 1024, // 2GB default
-		PREFIX:    getEnv("PREFIX", "/"),
-		AssetURL:  getEnv("ASSET_URL", ""),
-		Whitelist: parseWhitelist(getEnv("WHITELIST", "")),
 	}
 
 	// Create proxy handler
@@ -554,13 +481,6 @@ func main() {
 	http.Handle("/", handler)
 
 	log.Printf("GitHub Proxy server starting on port %s", config.Port)
-	log.Printf("JSDELIVR acceleration: %v", config.JSDELIVR)
-	log.Printf("CNPMJS acceleration: %v", config.CNPMJS)
-	if len(config.Whitelist) > 0 {
-		log.Printf("Whitelist enabled with %d repositories: %v", len(config.Whitelist), config.Whitelist)
-	} else {
-		log.Printf("Whitelist disabled - all repositories allowed")
-	}
 
 	if err := http.ListenAndServe(":"+config.Port, nil); err != nil {
 		log.Fatalf("Server failed to start: %v", err)
@@ -573,22 +493,4 @@ func getEnv(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
-}
-
-// Parse whitelist from comma-separated string
-func parseWhitelist(whitelistStr string) []string {
-	if whitelistStr == "" {
-		return []string{}
-	}
-
-	var whitelist []string
-	parts := strings.Split(whitelistStr, ",")
-	for _, part := range parts {
-		repo := strings.TrimSpace(part)
-		if repo != "" {
-			whitelist = append(whitelist, repo)
-		}
-	}
-
-	return whitelist
 }
